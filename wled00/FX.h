@@ -88,26 +88,23 @@ extern byte realtimeMode;           // used in getMappedPixelIndex()
 #endif
 #define FPS_CALC_SHIFT 7 // bit shift for fixed point math
 
-// heap memory limit for effects data, pixel buffers try to reserve it if PSRAM is available
+/* each segment uses 82 bytes of SRAM memory, so if you're application fails because of
+  insufficient memory, decreasing MAX_NUM_SEGMENTS may help */
 #ifdef ESP8266
   #define MAX_NUM_SEGMENTS  16
   /* How much data bytes all segments combined may allocate */
-  #define MAX_SEGMENT_DATA  (6*1024) // 6k by default
+  #define MAX_SEGMENT_DATA  5120
 #elif defined(CONFIG_IDF_TARGET_ESP32S2)
-  #define MAX_NUM_SEGMENTS  32
-  #define MAX_SEGMENT_DATA  (20*1024) // 20k by default (S2 is short on free RAM), limit does not apply if PSRAM is available
+  #define MAX_NUM_SEGMENTS  20
+  #define MAX_SEGMENT_DATA  (MAX_NUM_SEGMENTS*512)  // 10k by default (S2 is short on free RAM)
 #else
-  #ifdef BOARD_HAS_PSRAM
-    #define MAX_NUM_SEGMENTS  64
-  #else
-    #define MAX_NUM_SEGMENTS  32
-  #endif
-  #define MAX_SEGMENT_DATA  (64*1024) // 64k by default, limit does not apply if PSRAM is available
+  #define MAX_NUM_SEGMENTS  32  // warning: going beyond 32 may consume too much RAM for stable operation
+  #define MAX_SEGMENT_DATA  (MAX_NUM_SEGMENTS*1280) // 40k by default
 #endif
 
 /* How much data bytes each segment should max allocate to leave enough space for other segments,
   assuming each segment uses the same amount of data. 256 for ESP8266, 640 for ESP32. */
-#define FAIR_DATA_PER_SEG (MAX_SEGMENT_DATA / MAX_NUM_SEGMENTS)
+#define FAIR_DATA_PER_SEG (MAX_SEGMENT_DATA / WS2812FX::getMaxSegments())
 
 #define MIN_SHOW_DELAY   (_frametime < 16 ? 8 : 15)
 
@@ -320,7 +317,6 @@ extern byte realtimeMode;           // used in getMappedPixelIndex()
 #define FX_MODE_DJLIGHT                159
 #define FX_MODE_2DFUNKYPLANK           160
 //#define FX_MODE_2DCENTERBARS           161
-#define FX_MODE_SHIMMER                161  // gap fill, non SR 1D effect
 #define FX_MODE_2DPULSER               162
 #define FX_MODE_BLURZ                  163
 #define FX_MODE_2DDRIFT                164
@@ -537,6 +533,7 @@ class Segment {
 
   protected:
 
+    inline static unsigned getUsedSegmentData()            { return Segment::_usedSegmentData; }
     inline static void     addUsedSegmentData(int len)     { Segment::_usedSegmentData += len; }
 
     inline uint32_t *getPixels() const                              { return pixels; }
@@ -603,8 +600,8 @@ class Segment {
     , _t(nullptr)
     {
       DEBUGFX_PRINTF_P(PSTR("-- Creating segment: %p [%d,%d:%d,%d]\n"), this, (int)start, (int)stop, (int)startY, (int)stopY);
-      // allocate render buffer (always entire segment), prefer PSRAM if DRAM is running low. Note: impact on FPS with PSRAM buffer is low (<2% with QSPI PSRAM)
-      pixels = static_cast<uint32_t*>(allocate_buffer(length() * sizeof(uint32_t), BFRALLOC_PREFER_PSRAM | BFRALLOC_NOBYTEACCESS | BFRALLOC_CLEAR));
+      // allocate render buffer (always entire segment)
+      pixels = static_cast<uint32_t*>(d_calloc(sizeof(uint32_t), length())); // error handling is also done in isActive()
       if (!pixels) {
         DEBUGFX_PRINTLN(F("!!! Not enough RAM for pixel buffer !!!"));
         extern byte errorFlag;
@@ -625,11 +622,8 @@ class Segment {
       DEBUGFX_PRINTLN();
       #endif
       clearName();
-      #ifdef WLED_ENABLE_GIF
-      endImagePlayback(this);
-      #endif
       deallocateData();
-      p_free(pixels);
+      d_free(pixels);
     }
 
     Segment& operator= (const Segment &orig); // copy assignment
@@ -652,7 +646,7 @@ class Segment {
     inline uint16_t groupLength()          const { return grouping + spacing; }
     inline uint8_t  getLightCapabilities() const { return _capabilities; }
     inline void     deactivate()                 { setGeometry(0,0); }
-    inline Segment &clearName()                  { p_free(name); name = nullptr; return *this; }
+    inline Segment &clearName()                  { d_free(name); name = nullptr; return *this; }
     inline Segment &setName(const String &name)  { return setName(name.c_str()); }
 
     inline static unsigned vLength()                       { return Segment::_vLength; }
@@ -678,7 +672,6 @@ class Segment {
     inline uint16_t dataSize() const { return _dataLen; }
     bool allocateData(size_t len);  // allocates effect data buffer in heap and clears it
     void deallocateData();          // deallocates (frees) effect data buffer from heap
-    inline static unsigned getUsedSegmentData()            { return Segment::_usedSegmentData; }
     /**
       * Flags that before the next effect is calculated,
       * the internal segment state should be reset.
@@ -875,8 +868,8 @@ class WS2812FX {
     }
 
     ~WS2812FX() {
-      p_free(_pixels);
-      p_free(_pixelCCT); // just in case
+      d_free(_pixels);
+      d_free(_pixelCCT); // just in case
       d_free(customMappingTable);
       _mode.clear();
       _modeData.clear();

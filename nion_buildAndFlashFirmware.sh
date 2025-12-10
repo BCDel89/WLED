@@ -36,8 +36,8 @@ echo -e "${BLUE}Selected device: $selected_device${RESET}"
 source export.sh
 
 # Build firmware and filesystem
-# pio run -e esp32s3mini_4MB_psram
-# pio run -e esp32s3mini_4MB_psram -t buildfs
+pio run -e esp32s3mini_4MB_psram
+pio run -e esp32s3mini_4MB_psram -t buildfs
 
 # Prompt user to put the board in download mode
 echo -e "${CYAN}You should put your board in download mode before flashing the firmware.${RESET}"
@@ -57,6 +57,4 @@ echo -e "${CYAN}You should put your board in download mode again before uploadin
 read -n 1 -s -r -p "$(echo -e ${GREEN}Press any key to acknowledge and continue...${RESET})"
 
 # Upload the filesystem
-# pio run -e esp32s3mini_4MB_psram -t uploadfs --upload-port "$selected_device"
-pio run -e esp32s3mini_4MB_psram -t uploadfs --disable-auto-clean --upload-port "$selected_device"
-
+pio run -e esp32s3mini_4MB_psram -t uploadfs --upload-port "$selected_device"
