@@ -1,62 +1,164 @@
 #!/bin/bash
+set -Eeuo pipefail
 
-# Define color codes
+# =========================
+# Config
+# =========================
+MAX_RETRIES=3
+# BAUD=115200
+BAUD=460800
+VERBOSE=0   # set to 1 for extra logging
+
+# =========================
+# Color codes
+# =========================
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-RESET='\033[0m' # Reset color
+RESET='\033[0m'
 
-# Query available USB serial devices
-echo -e "${CYAN}Available USB serial devices:${RESET}"
-devices=($(ls /dev/cu.* | grep -E "/dev/cu.(usbserial|usbmodem|SLAB_USBtoUART|wchusbserial)"))
-if [ ${#devices[@]} -eq 0 ]; then
-  echo -e "${RED}No USB serial devices found. Exiting.${RESET}"
+# =========================
+# Helpers
+# =========================
+die() {
+  echo -e "${RED}[ERROR] $*${RESET}" >&2
   exit 1
-fi
+}
 
-# Display the list of devices
-for i in "${!devices[@]}"; do
-  echo -e "${YELLOW}[$i] ${devices[$i]}${RESET}"
-done
+log() {
+  echo -e "${CYAN}[INFO] $*${RESET}"
+}
 
-# Prompt the user to select a device
-read -p "$(echo -e ${GREEN}Select a device by number:${RESET} ) " selection
-if ! [[ "$selection" =~ ^[0-9]+$ ]] || [ "$selection" -ge "${#devices[@]}" ]; then
-  echo -e "${RED}Invalid selection. Exiting.${RESET}"
-  exit 1
-fi
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command '$1' not found"
+}
 
-# Set the selected device
-selected_device="${devices[$selection]}"
-echo -e "${BLUE}Selected device: $selected_device${RESET}"
+# =========================
+# Preflight checks
+# =========================
+require_cmd python3
+require_cmd esptool.py
+require_cmd pio
 
-# Source environment variables
 source export.sh
 
-# Build firmware and filesystem
-# pio run -e esp32s3mini_4MB_psram
-# pio run -e esp32s3mini_4MB_psram -t buildfs
+[[ -f "$BOOTLOADER" ]] || die "BOOTLOADER not found: $BOOTLOADER"
+[[ -f "$BOOTAPP0" ]]   || die "BOOTAPP0 not found"
+[[ -f ".pio/build/esp32s3mini_4MB_psram/firmware.bin" ]] || die "Firmware binary missing"
 
-# Prompt user to put the board in download mode
-echo -e "${CYAN}You should put your board in download mode before flashing the firmware.${RESET}"
-read -n 1 -s -r -p "$(echo -e ${GREEN}Press any key to acknowledge and continue...${RESET})"
+# =========================
+# Enter download mode
+# =========================
+enter_download_mode() {
+  local PORT="$1"
 
-# Flash the firmware using esptool.py
-esptool.py --chip esp32s3 --baud 460800 \
-  --port "$selected_device" \
-  write_flash -z --flash_mode dio --flash_size 4MB \
-  0x0      "$BOOTLOADER" \
-  0x8000   .pio/build/esp32s3mini_4MB_psram/partitions.bin \
-  0xe000   "$BOOTAPP0" \
-  0x10000  .pio/build/esp32s3mini_4MB_psram/firmware.bin
+  python3 - <<EOF
+import serial, time, sys
+port="$PORT"
 
-# Prompt user to put the board in download mode again for filesystem upload
-echo -e "${CYAN}You should put your board in download mode again before uploading the filesystem.${RESET}"
-read -n 1 -s -r -p "$(echo -e ${GREEN}Press any key to acknowledge and continue...${RESET})"
+try:
+    s = serial.Serial(port, 115200)
+except Exception as e:
+    print(f"[PY] Failed to open {port}: {e}")
+    sys.exit(2)
 
-# Upload the filesystem
-# pio run -e esp32s3mini_4MB_psram -t uploadfs --upload-port "$selected_device"
-pio run -e esp32s3mini_4MB_psram -t uploadfs --disable-auto-clean --upload-port "$selected_device"
+# DTR -> GPIO0 (BOOT), RTS -> EN (RESET)
+s.dtr = True        # BOOT LOW
+time.sleep(0.05)
+s.rts = True        # RESET LOW
+time.sleep(0.15)
+s.rts = False       # RESET HIGH
+time.sleep(0.15)
+
+# keep BOOT LOW until esptool connects
+s.close()
+EOF
+}
+
+release_boot() {
+  local PORT="$1"
+  python3 - <<EOF
+import serial, time
+s = serial.Serial("$PORT", 115200)
+s.dtr = False       # BOOT HIGH
+time.sleep(0.05)
+s.close()
+EOF
+}
+
+# =========================
+# Find USB serial devices
+# =========================
+log "~ Finding USB serial devices"
+devices=($(ls /dev/cu.* 2>/dev/null | grep -E "/dev/cu.(usbserial|usbmodem|SLAB_USBtoUART|wchusbserial)"))
+
+[[ ${#devices[@]} -gt 0 ]] || die "No USB serial devices found"
+
+if [[ ${#devices[@]} -eq 1 ]]; then
+  selected_device="${devices[0]}"
+  echo -e "${BLUE}Only one device found. Auto-selected: $selected_device${RESET}"
+else
+  echo -e "${CYAN}Available USB serial devices:${RESET}"
+  for i in "${!devices[@]}"; do
+    echo -e "${YELLOW}[$i] ${devices[$i]}${RESET}"
+  done
+
+  read -p "$(echo -e ${GREEN}Select a device by number:${RESET} ) " selection
+  [[ "$selection" =~ ^[0-9]+$ ]] && [[ "$selection" -lt "${#devices[@]}" ]] \
+    || die "Invalid selection"
+
+  selected_device="${devices[$selection]}"
+fi
+
+# Prefer tty.* on macOS (more reliable for modem control)
+selected_device="${selected_device/cu./tty.}"
+log "Using serial device: $selected_device"
+
+# =========================
+# Flash firmware with retries
+# =========================
+log "~ Flashing firmware with retries"
+attempt=1
+while [[ $attempt -le $MAX_RETRIES ]]; do
+  log "Attempt $attempt/$MAX_RETRIES: entering download mode"
+  enter_download_mode "$selected_device"
+
+  if esptool.py --chip esp32s3 --baud "$BAUD" \
+    --port "$selected_device" \
+    --before no_reset --after no_reset \
+    write_flash -z --flash_mode dio --flash_size 4MB \
+      0x0      "$BOOTLOADER" \
+      0x8000   .pio/build/esp32s3mini_4MB_psram/partitions.bin \
+      0xe000   "$BOOTAPP0" \
+      0x10000  .pio/build/esp32s3mini_4MB_psram/firmware.bin
+  then
+    log "Firmware flashed successfully"
+    release_boot "$selected_device"
+    break
+  fi
+
+  echo -e "${YELLOW}Flash attempt $attempt failed${RESET}"
+  ((attempt++))
+  sleep 0.5
+done
+
+[[ $attempt -le $MAX_RETRIES ]] || die "Failed to connect to ESP32-S3 after $MAX_RETRIES attempts (not in download mode?)"
+
+# =========================
+# Filesystem upload
+# =========================
+log "Uploading filesystem"
+enter_download_mode "$selected_device"
+
+pio run -e esp32s3mini_4MB_psram \
+  -t uploadfs \
+  --disable-auto-clean \
+  --upload-port "$selected_device" \
+  || die "Filesystem upload failed"
+
+release_boot "$selected_device"
+
+log "${GREEN}All done — flash + filesystem successful${RESET}"
 
