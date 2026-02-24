@@ -3,7 +3,7 @@
         1,
         0
     ],
-    "vid": 2406290,
+    "vid": 2412040,
     "id": {
         "mdns": "wled-ec2d01",
         "name": "WLED",
@@ -12,11 +12,12 @@
     },
     "nw": {
         "espnow": false,
-        "linked_remote": "",
+        "linked_remote": [],
         "ins": [
             {
-                "ssid": "",
-                "pskl": 0,
+                "ssid": "Essos",
+                "pskl": 19,
+                "bssid": "",
                 "ip": [
                     0,
                     0,
@@ -46,7 +47,7 @@
     },
     "ap": {
         "ssid": "CustomNionLightsAP",
-        "pskl": 10,
+        "pskl": 8,
         "chan": 1,
         "hide": 0,
         "behav": 4,
@@ -57,19 +58,22 @@
             1
         ]
     },
-    "wifi": { "ssid": "Essos", "psk": "mojojojothe1ANDONLY" },
+    "wifi": {
+        "sleep": false,
+        "phy": false,
+        "txpwr": 78
+    },
     "hw": {
         "led": {
             "total": 90,
             "maxpwr": 400,
-            "ledma": 0,
             "cct": false,
             "cr": false,
             "ic": false,
             "cb": 0,
             "fps": 42,
             "rgbwm": 255,
-            "ld": false,
+            "prl": false,
             "ins": [
                 {
                     "start": 0,
@@ -85,13 +89,14 @@
                     "rgbwm": 0,
                     "freq": 0,
                     "maxpwr": 400,
-                    "ledma": 55
+                    "ledma": 55,
+                    "text": ""
                 }
             ]
         },
         "com": [],
         "btn": {
-            "max": 2,
+            "max": 4,
             "pull": true,
             "ins": [
                 {
@@ -101,8 +106,30 @@
                     ],
                     "macros": [
                         250,
-                        200,
+                        0,
                         249
+                    ]
+                },
+                {
+                    "type": 0,
+                    "pin": [
+                        -1
+                    ],
+                    "macros": [
+                        0,
+                        0,
+                        0
+                    ]
+                },
+                {
+                    "type": 0,
+                    "pin": [
+                        -1
+                    ],
+                    "macros": [
+                        0,
+                        0,
+                        0
                     ]
                 },
                 {
@@ -153,10 +180,7 @@
             "val": 2.8
         },
         "tr": {
-            "mode": true,
-            "fx": true,
             "dur": 7,
-            "pal": false,
             "rpc": 5,
             "hrp": true
         },
@@ -181,6 +205,7 @@
                 "bri": true,
                 "col": true,
                 "fx": true,
+                "pal": true,
                 "grp": 1,
                 "seg": false,
                 "sb": false
@@ -211,7 +236,11 @@
                 "e131prio": 0,
                 "addr": 1,
                 "dss": 0,
-                "mode": 4
+                "mode": 4,
+                "inputRxPin": 0,
+                "inputTxPin": 0,
+                "inputEnablePin": 0,
+                "dmxInputPort": 2
             },
             "timeout": 25,
             "maxbri": false,
@@ -308,7 +337,15 @@
         "lock": false,
         "lock-wifi": false,
         "pskl": 7,
-        "aota": true
+        "aota": true,
+        "same-subnet": true
     },
-    "um": {}
+    "um": {
+        "Autosave": {
+            "enabled": true,
+            "autoSaveAfterSec": 1,
+            "autoSavePreset": 200,
+            "autoSaveApplyOnBoot": true
+        }
+    }
 }
